@@ -3,40 +3,77 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { Upload, TrendingUp, Users, MapPin, Target, Award, ChevronDown, ChevronUp, Maximize2, Minimize2, Eye, Calendar, RotateCcw, Megaphone, DollarSign } from 'lucide-react';
 import Papa from 'papaparse';
 
-// --- Helpers de Fecha ---
-const parseDateToISO = (dateStr) => {
-  if (!dateStr) return '';
-  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) return dateStr;
+// --- Helpers de Fecha y Moneda ---
+
+const parseDateToISO = (dateStr, fallbackDate = '') => {
+  if (!dateStr) return fallbackDate;
+  const cleanStr = dateStr.toString().trim();
   
-  const cleanStr = dateStr.replace(/-/g, '/');
-  const parts = cleanStr.split('/');
+  if (cleanStr.match(/^\d{4}-\d{2}-\d{2}$/)) return cleanStr;
   
-  if (parts.length === 3) {
+  if (cleanStr.toUpperCase().includes(' AL ')) {
+      const parts = cleanStr.toUpperCase().split(' AL ');
+      const startDatePart = parts[0].trim();
+      const endParts = parts[1].trim().split('/');
+      let month, year;
+      if (endParts.length >= 2) {
+          month = endParts[endParts.length - 2];
+          year = parseInt(month) === 12 ? '2025' : '2026';
+      }
+      let day = startDatePart.split('/')[0];
+      const pad = (n) => n.toString().padStart(2, '0');
+      return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  const slashParts = cleanStr.replace(/-/g, '/').split('/');
+  if (slashParts.length >= 2) {
       let day, month, year;
-      if(parts[0].length === 4) {
-          year = parts[0];
-          month = parts[1];
-          day = parts[2];
+      if(slashParts[0].length === 4) {
+          year = slashParts[0];
+          month = slashParts[1];
+          day = slashParts[2];
       } else {
-          day = parts[0];
-          month = parts[1];
-          year = parts[2];
+          day = slashParts[0];
+          month = slashParts[1];
+          year = slashParts.length === 3 ? slashParts[2] : (parseInt(slashParts[1]) === 12 ? '2025' : '2026');
       }
       const pad = (n) => n.toString().padStart(2, '0');
       return `${year}-${pad(month)}-${pad(day)}`;
   }
-  return '';
+  
+  return fallbackDate;
+};
+
+const parseCurrency = (val) => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val;
+    let clean = val.toString().replace('$', '').replace(/\s/g, '');
+    
+    if (clean.includes(',') && clean.includes('.')) {
+        if (clean.lastIndexOf('.') > clean.lastIndexOf(',')) {
+             clean = clean.replace(/,/g, ''); 
+        } else {
+             clean = clean.replace(/\./g, '').replace(',', '.'); 
+        }
+    } else if (clean.includes(',')) {
+        clean = clean.replace(',', '.');
+    }
+    
+    return parseFloat(clean) || 0;
 };
 
 const formatDateDisplay = (isoDate) => {
   if (!isoDate) return '';
   const parts = isoDate.split('-');
-  return `${parts[2]}/${parts[1]}`; // DD/MM
+  return `${parts[2]}/${parts[1]}`;
 };
 
 const App = () => {
-  const [data, setData] = useState([]); // Leads
-  const [marketingEvents, setMarketingEvents] = useState([]); // Eventos
+  const [data, setData] = useState([]);
+  const [marketingEvents, setMarketingEvents] = useState([]);
+  const [dailyCampaignData, setDailyCampaignData] = useState([]);
+  const [dailyReachData, setDailyReachData] = useState([]);
+  const [dailyProvinceReachData, setDailyProvinceReachData] = useState([]);
   
   const [filters, setFilters] = useState({
     agente: 'Todos',
@@ -46,22 +83,91 @@ const App = () => {
     endDate: ''
   });
   const [provinciaChartType, setProvinciaChartType] = useState('cotizacion');
+  const [selectedCampaign, setSelectedCampaign] = useState('Todas');
   const [collapsedCharts, setCollapsedCharts] = useState({});
   const [collapsedKPIs, setCollapsedKPIs] = useState({});
   const [expandedChart, setExpandedChart] = useState(null);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
   
+  const PROVINCE_COLORS = {
+    'Tucumán': '#ef4444',
+    'Tucuman': '#ef4444',
+    'Córdoba': '#3b82f6',
+    'Cordoba': '#3b82f6',
+    'Santiago del Estero': '#10b981',
+    'Salta': '#f59e0b',
+    'Jujuy': '#8b5cf6',
+    'Catamarca': '#ec4899',
+    'La Rioja': '#14b8a6',
+    'default': '#6b7280'
+  };
+  
   const EVENT_COLORS = {
-    'pauta': '#ef4444',    // Rojo
-    'organico': '#10b981', // Verde
-    'evento': '#8b5cf6',   // Violeta
-    'offline': '#6b7280',  // Gris
-    'email': '#3b82f6',    // Azul
-    'default': '#f59e0b'   // Naranja
+    'pauta': '#ef4444',
+    'organico': '#10b981',
+    'evento': '#8b5cf6',
+    'offline': '#6b7280',
+    'email': '#3b82f6',
+    'leads': '#ef4444', 
+    'branding': '#f59e0b',
+    'visitas': '#8b5cf6',
+    'seguidores': '#14b8a6',
+    'default': '#f59e0b'
   };
 
-  // --- Carga de Archivos ---
+  const getCampaignColor = (campaignName) => {
+    const colors = {
+      'BRANDING-ANDINE': '#ef4444',
+      'anuncio de Clientes potenciales': '#10b981',
+      'Nuevo anuncio de Clientes potenciales': '#10b981',
+      'SEGUIDORES IG Anuncio': '#f59e0b',
+      'VISITAS SHOWROOM': '#3b82f6',
+      'venta producto showroom': '#8b5cf6'
+    };
+    
+    const normalized = campaignName.trim();
+    
+    if (colors[normalized]) return colors[normalized];
+    
+    for (const [key, color] of Object.entries(colors)) {
+      if (normalized.includes(key) || key.includes(normalized)) {
+        return color;
+      }
+    }
+    
+    const index = normalized.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const defaultColors = ['#14b8a6', '#ec4899', '#f97316', '#06b6d4', '#84cc16'];
+    return defaultColors[index % defaultColors.length];
+  };
+
+  const getProvinceColor = (provinceName) => {
+    return PROVINCE_COLORS[provinceName] || PROVINCE_COLORS['default'];
+  };
+
+  const getProvinceGroup = (provinceName) => {
+    if (!provinceName) return 'Resto del País';
+    const prov = provinceName.toLowerCase();
+    
+    if (prov.includes('tucum') || prov.includes('tucumán')) return 'Tucumán';
+    if (prov.includes('córdoba') || prov.includes('cordoba')) return 'Córdoba';
+    if (prov.includes('mendoza')) return 'Mendoza';
+    
+    // Provincias del NOA (sin Tucumán)
+    const noaProvs = ['salta', 'jujuy', 'santiago', 'catamarca', 'rioja', 'la rioja'];
+    if (noaProvs.some(p => prov.includes(p))) return 'Resto del NOA';
+    
+    return 'Resto del País';
+  };
+
+  const GROUPED_PROVINCE_COLORS = {
+    'Tucumán': '#ef4444',
+    'Resto del NOA': '#f59e0b',
+    'Córdoba': '#3b82f6',
+    'Mendoza': '#8b5cf6',
+    'Resto del País': '#10b981'
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -93,30 +199,178 @@ const App = () => {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        const events = results.data.map(row => {
-            const dateVal = row['Fecha'] || row['fecha'];
-            const nameVal = row['Nombre del Evento'] || row['Nombre'] || row['Evento'];
-            const typeVal = row['Tipo'] || row['Categoria'];
-            const platformVal = row['Plataforma'] || row['Medio'];
-            
-            if (!dateVal || !nameVal) return null;
+        console.log("Headers Eventos Detectados:", results.meta.fields);
+        
+        let processedEvents = [];
+        let dailyCampaigns = [];
+        let dailyReach = [];
+        let dailyProvinceReach = [];
+        
+        const isDailyMetaReport = results.meta.fields.includes('Inicio del informe') && results.meta.fields.includes('Nombre del anuncio');
 
-            return {
-                dateISO: parseDateToISO(dateVal),
-                name: nameVal,
-                type: typeVal?.toLowerCase() || 'default',
-                platform: platformVal,
-                investment: parseFloat(row['Inversion'] || 0)
-            };
-        }).filter(Boolean);
-        // Ordenar por fecha
-        events.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
-        setMarketingEvents(events);
+        if (isDailyMetaReport) {
+            const adGroups = {};
+            const dailyInvestmentData = {};
+            const dailyReachByRegion = {};
+            const dailyReachByProvince = {};
+            const dailyReachByProvinceAndCampaign = {}; // NUEVO: Para segmentar por campaña
+            
+            results.data.forEach(row => {
+                const name = row['Nombre del anuncio'] || row['Nombre de la campaña'];
+                const dateVal = row['Inicio del informe'];
+                const cost = parseCurrency(row['Importe gastado (ARS)'] || row['Importe gastado']);
+                const reach = parseInt(row['Alcance']) || 0;
+                const region = row['Región'] || 'Sin datos';
+                
+                if (!name || !dateVal) return;
+
+                const dateISO = parseDateToISO(dateVal);
+                
+                // Inversión diaria por campaña
+                if (!dailyInvestmentData[dateISO]) {
+                    dailyInvestmentData[dateISO] = {};
+                }
+                if (!dailyInvestmentData[dateISO][name]) {
+                    dailyInvestmentData[dateISO][name] = 0;
+                }
+                dailyInvestmentData[dateISO][name] += cost;
+                
+                // Alcance diario por región (gráfico original)
+                if (!dailyReachByRegion[dateISO]) {
+                    dailyReachByRegion[dateISO] = {};
+                }
+                if (!dailyReachByRegion[dateISO][name]) {
+                    dailyReachByRegion[dateISO][name] = {};
+                }
+                if (!dailyReachByRegion[dateISO][name][region]) {
+                    dailyReachByRegion[dateISO][name][region] = 0;
+                }
+                dailyReachByRegion[dateISO][name][region] += reach;
+                
+                // NUEVO: Alcance diario por provincia (agregado de todas las campañas)
+                if (!dailyReachByProvince[dateISO]) {
+                    dailyReachByProvince[dateISO] = {};
+                }
+                if (!dailyReachByProvince[dateISO][region]) {
+                    dailyReachByProvince[dateISO][region] = 0;
+                }
+                dailyReachByProvince[dateISO][region] += reach;
+                
+                // NUEVO: Alcance diario por provincia Y campaña (para filtrado)
+                if (!dailyReachByProvinceAndCampaign[dateISO]) {
+                    dailyReachByProvinceAndCampaign[dateISO] = {};
+                }
+                if (!dailyReachByProvinceAndCampaign[dateISO][name]) {
+                    dailyReachByProvinceAndCampaign[dateISO][name] = {};
+                }
+                if (!dailyReachByProvinceAndCampaign[dateISO][name][region]) {
+                    dailyReachByProvinceAndCampaign[dateISO][name][region] = 0;
+                }
+                dailyReachByProvinceAndCampaign[dateISO][name][region] += reach;
+                
+                if (!adGroups[name]) {
+                    adGroups[name] = {
+                        name: name,
+                        startDate: dateISO,
+                        totalInvestment: 0,
+                        type: 'pauta'
+                    };
+                    const nameLower = name.toLowerCase();
+                    if (nameLower.includes('visita')) adGroups[name].type = 'visitas';
+                    else if (nameLower.includes('seguidor')) adGroups[name].type = 'seguidores';
+                    else if (nameLower.includes('brand')) adGroups[name].type = 'branding';
+                    else if (nameLower.includes('lead')) adGroups[name].type = 'leads';
+                }
+
+                if (dateISO < adGroups[name].startDate) {
+                    adGroups[name].startDate = dateISO;
+                }
+                
+                adGroups[name].totalInvestment += cost;
+            });
+
+            processedEvents = Object.values(adGroups).map(group => ({
+                dateISO: group.startDate,
+                name: group.name,
+                type: group.type,
+                platform: 'Meta Ads',
+                investment: group.totalInvestment
+            }));
+
+            dailyCampaigns = Object.entries(dailyInvestmentData).map(([date, campaigns]) => ({
+                date,
+                displayDate: formatDateDisplay(date),
+                ...campaigns
+            })).sort((a, b) => a.date.localeCompare(b.date));
+
+            dailyReach = Object.entries(dailyReachByRegion).map(([date, campaigns]) => {
+                const dayData = {
+                    date,
+                    displayDate: formatDateDisplay(date)
+                };
+                
+                Object.entries(campaigns).forEach(([campaign, regions]) => {
+                    dayData[campaign] = Object.values(regions).reduce((sum, reach) => sum + reach, 0);
+                });
+                
+                return dayData;
+            }).sort((a, b) => a.date.localeCompare(b.date));
+
+            // MODIFICADO: Procesar alcance por provincia con información de campaña
+            dailyProvinceReach = Object.entries(dailyReachByProvinceAndCampaign).map(([date, campaigns]) => ({
+                date,
+                displayDate: formatDateDisplay(date),
+                campaigns: campaigns // Guardar datos por campaña
+            })).sort((a, b) => a.date.localeCompare(b.date));
+
+        } else {
+            processedEvents = results.data.map(row => {
+                let dateVal, nameVal, typeVal, platformVal, investmentVal;
+                
+                if (row['CAMPAÑAS ACTIVAS '] || row['CAMPAÑAS ACTIVAS']) {
+                    dateVal = row['FECHA CIRCULACIÓN '] || row['FECHA CIRCULACIÓN'];
+                    nameVal = row['COMENTARIOS'] || row['CAMPAÑAS ACTIVAS '] || 'Campaña';
+                    typeVal = row['CAMPAÑAS ACTIVAS '] || 'pauta';
+                    platformVal = 'Meta Ads';
+                    investmentVal = row['GASTO TOTAL'] || row['INVERSIÓN DIARIA'];
+                } else {
+                    dateVal = row['Fecha'] || row['fecha'];
+                    nameVal = row['Nombre del Evento'] || row['Nombre'] || row['Evento'];
+                    typeVal = row['Tipo'] || row['Categoria'];
+                    platformVal = row['Plataforma'] || row['Medio'];
+                    investmentVal = row['Inversion'] || 0;
+                }
+                
+                const dateISO = parseDateToISO(dateVal);
+                if (!dateISO || !nameVal) return null;
+
+                let cleanType = 'default';
+                const typeLower = (typeVal || 'default').toLowerCase();
+                if (typeLower.includes('lead')) cleanType = 'leads';
+                else if (typeLower.includes('brand')) cleanType = 'branding';
+                else if (typeLower.includes('visita')) cleanType = 'visitas';
+                else if (typeLower.includes('organico')) cleanType = 'organico';
+                else if (typeLower.includes('pauta')) cleanType = 'pauta';
+
+                return {
+                    dateISO,
+                    name: nameVal,
+                    type: cleanType,
+                    platform: platformVal,
+                    investment: parseCurrency(investmentVal)
+                };
+            }).filter(Boolean);
+        }
+        
+        processedEvents.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+        setMarketingEvents(processedEvents);
+        setDailyCampaignData(dailyCampaigns);
+        setDailyReachData(dailyReach);
+        setDailyProvinceReachData(dailyProvinceReach);
       }
     });
   };
 
-  // Normalizadores
   const normalizeAgent = (agent) => {
     if (!agent) return '';
     const normalized = agent.trim();
@@ -139,7 +393,6 @@ const App = () => {
     return provincia.trim();
   };
 
-  // Filtrar datos
   const filteredData = useMemo(() => {
     return data.filter(row => {
       const matchAgent = filters.agente === 'Todos' || row.AGENTE === filters.agente;
@@ -162,11 +415,94 @@ const App = () => {
       });
   }, [marketingEvents, filters.startDate, filters.endDate]);
 
+  const filteredDailyCampaigns = useMemo(() => {
+      return dailyCampaignData.filter(day => {
+          if (filters.startDate && day.date < filters.startDate) return false;
+          if (filters.endDate && day.date > filters.endDate) return false;
+          return true;
+      });
+  }, [dailyCampaignData, filters.startDate, filters.endDate]);
+
+  const filteredDailyReach = useMemo(() => {
+      return dailyReachData.filter(day => {
+          if (filters.startDate && day.date < filters.startDate) return false;
+          if (filters.endDate && day.date > filters.endDate) return false;
+          return true;
+      });
+  }, [dailyReachData, filters.startDate, filters.endDate]);
+
+  const filteredDailyProvinceReach = useMemo(() => {
+      return dailyProvinceReachData
+          .filter(day => {
+              if (filters.startDate && day.date < filters.startDate) return false;
+              if (filters.endDate && day.date > filters.endDate) return false;
+              return true;
+          })
+          .map(day => {
+              const result = {
+                  date: day.date,
+                  displayDate: day.displayDate,
+                  'Tucumán': 0,
+                  'Resto del NOA': 0,
+                  'Córdoba': 0,
+                  'Mendoza': 0,
+                  'Resto del País': 0
+              };
+              
+              // Si hay campañas guardadas (nuevo formato)
+              if (day.campaigns) {
+                  if (selectedCampaign === 'Todas') {
+                      // Agregar todas las provincias de todas las campañas
+                      Object.values(day.campaigns).forEach(provinces => {
+                          Object.entries(provinces).forEach(([province, reach]) => {
+                              const group = getProvinceGroup(province);
+                              result[group] += reach;
+                          });
+                      });
+                  } else {
+                      // Filtrar solo la campaña seleccionada
+                      const campaignData = day.campaigns[selectedCampaign];
+                      if (campaignData) {
+                          Object.entries(campaignData).forEach(([province, reach]) => {
+                              const group = getProvinceGroup(province);
+                              result[group] += reach;
+                          });
+                      }
+                  }
+              } else {
+                  // Formato antiguo (compatibilidad)
+                  Object.keys(day).forEach(key => {
+                      if (key !== 'date' && key !== 'displayDate') {
+                          const group = getProvinceGroup(key);
+                          result[group] = (result[group] || 0) + (day[key] || 0);
+                      }
+                  });
+              }
+              
+              return result;
+          });
+  }, [dailyProvinceReachData, filters.startDate, filters.endDate, selectedCampaign]);
+
+  const uniqueCampaigns = useMemo(() => {
+      const campaigns = new Set();
+      dailyCampaignData.forEach(day => {
+          Object.keys(day).forEach(key => {
+              if (key !== 'date' && key !== 'displayDate') {
+                  campaigns.add(key);
+              }
+          });
+      });
+      return Array.from(campaigns);
+  }, [dailyCampaignData]);
+
+  const uniqueProvinceGroups = useMemo(() => {
+      return ['Tucumán', 'Resto del NOA', 'Córdoba', 'Mendoza', 'Resto del País'];
+  }, []);
+
   const resetDates = () => {
     setFilters(prev => ({ ...prev, startDate: '', endDate: '' }));
   };
 
-  // --- KPIs ---
   const kpis = useMemo(() => {
     const currentCotizaciones = filteredData.filter(row => 
       row['Tipo de Evento']?.toLowerCase().includes('cotización') ||
@@ -206,6 +542,7 @@ const App = () => {
     const convLeadToCotiz = funnelLeads > 0 ? ((funnelCotizaciones / funnelLeads) * 100).toFixed(1) : 0;
 
     const totalInversion = filteredEvents.reduce((acc, curr) => acc + curr.investment, 0);
+    const cplGlobal = funnelLeads > 0 ? (totalInversion / funnelLeads).toFixed(0) : 0;
 
     return {
       funnel: {
@@ -223,11 +560,10 @@ const App = () => {
       convLeadToCotiz,
       leadsTucuman,
       visitasShowroom,
-      totalInversion
+      totalInversion,
+      cplGlobal
     };
   }, [filteredData, filteredEvents]);
-
-  // --- Datos Gráficos ---
 
   const uniqueAgents = useMemo(() => ['Todos', ...new Set(data.map(row => row.AGENTE))].filter(Boolean), [data]);
   const uniqueProvincias = useMemo(() => ['Todas', ...new Set(data.map(row => row['Provincia Detectada']))].filter(Boolean), [data]);
@@ -317,7 +653,6 @@ const App = () => {
 
   const dailyRegionData = useMemo(() => {
     const dataByDay = {};
-    // 1. Llenar con Leads
     filteredData.forEach(row => {
       if (row.fechaISO) {
         const dateKey = row.fechaISO;
@@ -332,7 +667,6 @@ const App = () => {
       }
     });
 
-    // 2. Asegurar que existan entradas para los días de Eventos
     filteredEvents.forEach(ev => {
         if (ev.dateISO && !dataByDay[ev.dateISO]) {
             dataByDay[ev.dateISO] = { date: ev.dateISO, name: formatDateDisplay(ev.dateISO), Tucuman: 0, RestoNOA: 0, RestoPais: 0 };
@@ -415,7 +749,6 @@ const App = () => {
     return ranking.filter(item => item.leads > 0 || item.cotizaciones > 0).sort((a, b) => b.conversion - a.conversion);
   }, [filteredData]);
 
-  // UI Helpers
   const toggleCollapse = (chartId) => setCollapsedCharts(prev => ({ ...prev, [chartId]: !prev[chartId] }));
   const toggleKPICollapse = (kpiId) => setCollapsedKPIs(prev => ({ ...prev, [kpiId]: !prev[kpiId] }));
   const toggleExpand = (chartId) => setExpandedChart(expandedChart === chartId ? null : chartId);
@@ -450,6 +783,85 @@ const App = () => {
             <p key={index} style={{ color: entry.fill }}>{entry.name}: {entry.value} ({totalDay > 0 ? ((entry.value/totalDay)*100).toFixed(1) : 0}%)</p>
           ))}
           <div className="border-t mt-2 pt-1 font-semibold text-gray-600">Total: {totalDay}</div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const ProvinceReachTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      const totalReach = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+      const validPayload = payload.filter(entry => entry.value > 0);
+      
+      return (
+        <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50">
+          <p className="font-bold mb-2">{label}</p>
+          {validPayload.map((entry, index) => {
+            const percentage = totalReach > 0 ? ((entry.value / totalReach) * 100).toFixed(1) : 0;
+            return (
+              <p key={index} style={{ color: entry.fill }}>
+                {entry.dataKey}: {entry.value.toLocaleString()} visitas ({percentage}%)
+              </p>
+            );
+          })}
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
+            Total: {totalReach.toLocaleString()} visitas
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const CampaignInvestmentTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      const totalInvestment = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+      const validPayload = payload.filter(entry => entry.value > 0);
+      
+      return (
+        <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50 max-w-sm">
+          <p className="font-bold mb-2">{label}</p>
+          <div className="max-h-64 overflow-y-auto">
+            {validPayload.map((entry, index) => {
+              const percentage = totalInvestment > 0 ? ((entry.value / totalInvestment) * 100).toFixed(1) : 0;
+              return (
+                <p key={index} style={{ color: entry.fill }} className="text-xs truncate">
+                  {entry.dataKey}: ${Math.round(entry.value).toLocaleString()} ({percentage}%)
+                </p>
+              );
+            })}
+          </div>
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
+            Total: ${Math.round(totalInvestment).toLocaleString()}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const CampaignReachTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      const totalReach = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
+      const validPayload = payload.filter(entry => entry.value > 0);
+      
+      return (
+        <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50 max-w-sm">
+          <p className="font-bold mb-2">{label}</p>
+          <div className="max-h-64 overflow-y-auto">
+            {validPayload.map((entry, index) => {
+              const percentage = totalReach > 0 ? ((entry.value / totalReach) * 100).toFixed(1) : 0;
+              return (
+                <p key={index} style={{ color: entry.fill }} className="text-xs truncate">
+                  {entry.dataKey}: {entry.value.toLocaleString()} visitas ({percentage}%)
+                </p>
+              );
+            })}
+          </div>
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
+            Total: {totalReach.toLocaleString()} visitas
+          </div>
         </div>
       );
     }
@@ -527,7 +939,6 @@ const App = () => {
                 </div>
                 <input type="file" accept=".csv,.tsv" onChange={handleFileUpload} className="hidden" />
             </label>
-            {/* Opción para subir Eventos después */}
           </div>
         </div>
       </div>
@@ -537,7 +948,6 @@ const App = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
             <div>
@@ -593,7 +1003,6 @@ const App = () => {
           </div>
         </div>
 
-        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <KPICard id="kpi-leads" icon={Users} value={kpis.funnel.leads} label="Total Leads" gradient="from-blue-500 to-blue-600" />
           <KPICard id="kpi-cotizaciones" icon={Target} value={kpis.cotizacionesActivas} label="Cotizaciones Activas" gradient="from-green-500 to-green-600" />
@@ -601,10 +1010,10 @@ const App = () => {
           <KPICard id="kpi-conv1" icon={TrendingUp} value={`${kpis.convLeadToCotiz}%`} label="Lead → Cotización" gradient="from-purple-500 to-purple-600" />
         </div>
         
-        {/* KPIs Inversion */}
         {kpis.totalInversion > 0 && (
-             <div className="grid grid-cols-1 gap-6 mb-6">
-                 <KPICard id="kpi-inv" icon={DollarSign} value={`$${kpis.totalInversion.toLocaleString()}`} label="Inversión Marketing Total" gradient="from-slate-700 to-slate-800" />
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                 <KPICard id="kpi-inv" icon={DollarSign} value={`$${kpis.totalInversion.toLocaleString()}`} label="Inversión Total Registrada" gradient="from-slate-700 to-slate-800" />
+                 <KPICard id="kpi-cpl" icon={Target} value={`$${kpis.cplGlobal}`} label="Costo por Lead (CPL)" gradient="from-emerald-600 to-emerald-700" subtext="Inversión / Leads Totales" />
              </div>
         )}
 
@@ -614,14 +1023,13 @@ const App = () => {
           <KPICard id="rel-visita-cotiz" icon={Award} value={`${kpis.porcentajeVisitasConCotiz}%`} label="Visitas con Cotización" subtext={`${kpis.visitantesConCotizacion} de ${kpis.totalVisitas} ya cotizaron`} gradient="from-pink-500 to-pink-600" />
         </div>
 
-        {/* Gráficos */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <ChartContainer id="funnel" title="Embudo de Ventas" height={300}>
             <BarChart data={funnelData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" radius={[8, 8, 0, 0]}>{funnelData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}</Bar></BarChart>
           </ChartContainer>
 
-          <ChartContainer id="daily-region" title="Evolución Diaria + Eventos Marketing" height={450}>
-            <BarChart data={dailyRegionData} margin={{ bottom: 40 }}> {/* MARGEN SUPERIOR PARA TEXTOS LARGOS */}
+          <ChartContainer id="daily-region" title="Evolución Diaria + Eventos Marketing" height={500}>
+            <BarChart data={dailyRegionData} margin={{ bottom: 120 }}> 
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis 
                 dataKey="date" 
@@ -636,33 +1044,160 @@ const App = () => {
               <Bar dataKey="RestoNOA" stackId="a" fill="#3b82f6" name="Resto NOA" />
               <Bar dataKey="RestoPais" stackId="a" fill="#10b981" name="Resto País" />
 
-              {/* LÍNEAS DE EVENTOS (Etiquetas Escaladas Horizontalmente) */}
               {filteredEvents.map((event, idx) => {
-                  // Lógica de Escalera Vertical (Carriles)
-                  const lane = idx % 3; // 0, 1, 2
-                  const verticalOffset = 50 + (lane * 20); // 30px, 50px, 70px
-
+                  const lane = idx % 6; 
+                  const verticalOffset = 60 + (lane * 25); 
+                  const eventColor = getCampaignColor(event.name);
                   return (
                     <ReferenceLine 
                         key={idx} 
                         x={event.dateISO} 
-                        stroke={EVENT_COLORS[event.type] || EVENT_COLORS.default}
+                        stroke={eventColor}
                         strokeDasharray="3 3"
-                        strokeWidth={2} 
+                        strokeWidth={3}
                         label={{ 
                             position: 'insideBottom',
                             value: event.name, 
-                            fill: EVENT_COLORS[event.type] || EVENT_COLORS.default,
+                            fill: eventColor,
                             fontSize: 11,
                             fontWeight: 'bold',
                             angle: 0, 
-                            dy: verticalOffset, // Desplazamiento dinámico para no chocarse
+                            dy: verticalOffset,
                         }} 
                     />
                   );
               })}
             </BarChart>
           </ChartContainer>
+
+          {filteredDailyCampaigns.length > 0 && (
+            <div className="lg:col-span-2">
+              <ChartContainer id="campaign-investment" title="Inversión Diaria por Publicación (ARS)" height={400}>
+                <BarChart data={filteredDailyCampaigns} margin={{ bottom: 80 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="displayDate" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis />
+                  <Tooltip content={<CampaignInvestmentTooltip />} />
+                  <Legend 
+                    wrapperStyle={{ 
+                      paddingTop: '20px',
+                      maxHeight: '120px',
+                      overflowY: 'auto'
+                    }}
+                    iconSize={10}
+                  />
+                  {uniqueCampaigns.map((campaign) => (
+                    <Bar 
+                      key={campaign}
+                      dataKey={campaign}
+                      stackId="campaigns"
+                      fill={getCampaignColor(campaign)}
+                      name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </div>
+          )}
+
+          {filteredDailyReach.length > 0 && (
+            <div className="lg:col-span-2">
+              <ChartContainer id="campaign-reach" title="Alcance Diario de Publicaciones (Visitas Únicas)" height={400}>
+                <BarChart data={filteredDailyReach} margin={{ bottom: 80 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="displayDate" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis />
+                  <Tooltip content={<CampaignReachTooltip />} />
+                  <Legend 
+                    wrapperStyle={{ 
+                      paddingTop: '20px',
+                      maxHeight: '120px',
+                      overflowY: 'auto'
+                    }}
+                    iconSize={10}
+                  />
+                  {uniqueCampaigns.map((campaign) => (
+                    <Bar 
+                      key={campaign}
+                      dataKey={campaign}
+                      stackId="reach"
+                      fill={getCampaignColor(campaign)}
+                      name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </div>
+          )}
+
+          {filteredDailyProvinceReach.length > 0 && (
+            <div className="lg:col-span-2">
+              <ChartContainer 
+                id="province-reach" 
+                title="Alcance Diario por Región (Visitas Únicas)" 
+                height={400}
+                customContent={
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Filtrar por Publicación
+                    </label>
+                    <select 
+                      value={selectedCampaign} 
+                      onChange={(e) => setSelectedCampaign(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="Todas">Todas las publicaciones</option>
+                      {uniqueCampaigns.map(campaign => (
+                        <option key={campaign} value={campaign}>{campaign}</option>
+                      ))}
+                    </select>
+                  </div>
+                }
+              >
+                <BarChart data={filteredDailyProvinceReach} margin={{ bottom: 80 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="displayDate" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis />
+                  <Tooltip content={<ProvinceReachTooltip />} />
+                  <Legend 
+                    wrapperStyle={{ 
+                      paddingTop: '20px',
+                      maxHeight: '120px',
+                      overflowY: 'auto'
+                    }}
+                    iconSize={10}
+                  />
+                  {uniqueProvinceGroups.map((group) => (
+                    <Bar 
+                      key={group}
+                      dataKey={group}
+                      stackId="provinces"
+                      fill={GROUPED_PROVINCE_COLORS[group]}
+                      name={group}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </div>
+          )}
 
           <ChartContainer id="agent-performance" title="Rendimiento por Vendedor" height={300}>
             <BarChart data={agentPerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip totalMap={{'Leads': kpis.funnel.leads, 'Cotizaciones': kpis.funnel.cotizaciones, 'OfertasComerciales': kpis.funnel.ofertas, 'Ventas': kpis.funnel.ventas}} />} /><Legend /><Bar dataKey="Leads" fill="#3b82f6" radius={[8, 8, 0, 0]} /><Bar dataKey="Cotizaciones" fill="#10b981" radius={[8, 8, 0, 0]} /><Bar dataKey="OfertasComerciales" fill="#f59e0b" radius={[8, 8, 0, 0]} /><Bar dataKey="Ventas" fill="#ef4444" radius={[8, 8, 0, 0]} /></BarChart>
