@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Upload, TrendingUp, Users, MapPin, Target, Award, ChevronDown, ChevronUp, Maximize2, Minimize2, Eye, Calendar, RotateCcw, Megaphone, DollarSign } from 'lucide-react';
+import { Upload, TrendingUp, Users, MapPin, Target, Award, ChevronDown, ChevronUp, Maximize2, Minimize2, Eye, Calendar, RotateCcw, Megaphone, DollarSign, Filter } from 'lucide-react';
 import Papa from 'papaparse';
 
 // --- Helpers de Fecha y Moneda ---
@@ -84,6 +84,10 @@ const App = () => {
   });
   const [provinciaChartType, setProvinciaChartType] = useState('cotizacion');
   const [selectedCampaign, setSelectedCampaign] = useState('Todas');
+  
+  // Nuevo estado para alternar la vista del gráfico unificado
+  const [agentViewMode, setAgentViewMode] = useState('channel'); // 'channel' o 'region'
+
   const [collapsedCharts, setCollapsedCharts] = useState({});
   const [collapsedKPIs, setCollapsedKPIs] = useState({});
   const [expandedChart, setExpandedChart] = useState(null);
@@ -125,38 +129,24 @@ const App = () => {
       'VISITAS SHOWROOM': '#3b82f6',
       'venta producto showroom': '#8b5cf6'
     };
-    
     const normalized = campaignName.trim();
-    
     if (colors[normalized]) return colors[normalized];
-    
     for (const [key, color] of Object.entries(colors)) {
-      if (normalized.includes(key) || key.includes(normalized)) {
-        return color;
-      }
+      if (normalized.includes(key) || key.includes(normalized)) return color;
     }
-    
     const index = normalized.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     const defaultColors = ['#14b8a6', '#ec4899', '#f97316', '#06b6d4', '#84cc16'];
     return defaultColors[index % defaultColors.length];
   };
 
-  const getProvinceColor = (provinceName) => {
-    return PROVINCE_COLORS[provinceName] || PROVINCE_COLORS['default'];
-  };
-
   const getProvinceGroup = (provinceName) => {
     if (!provinceName) return 'Resto del País';
     const prov = provinceName.toLowerCase();
-    
     if (prov.includes('tucum') || prov.includes('tucumán')) return 'Tucumán';
     if (prov.includes('córdoba') || prov.includes('cordoba')) return 'Córdoba';
     if (prov.includes('mendoza')) return 'Mendoza';
-    
-    // Provincias del NOA (sin Tucumán)
     const noaProvs = ['salta', 'jujuy', 'santiago', 'catamarca', 'rioja', 'la rioja'];
     if (noaProvs.some(p => prov.includes(p))) return 'Resto del NOA';
-    
     return 'Resto del País';
   };
 
@@ -171,7 +161,6 @@ const App = () => {
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -194,13 +183,10 @@ const App = () => {
   const handleEventsUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        console.log("Headers Eventos Detectados:", results.meta.fields);
-        
         let processedEvents = [];
         let dailyCampaigns = [];
         let dailyReach = [];
@@ -213,7 +199,7 @@ const App = () => {
             const dailyInvestmentData = {};
             const dailyReachByRegion = {};
             const dailyReachByProvince = {};
-            const dailyReachByProvinceAndCampaign = {}; // NUEVO: Para segmentar por campaña
+            const dailyReachByProvinceAndCampaign = {};
             
             results.data.forEach(row => {
                 const name = row['Nombre del anuncio'] || row['Nombre de la campaña'];
@@ -223,49 +209,24 @@ const App = () => {
                 const region = row['Región'] || 'Sin datos';
                 
                 if (!name || !dateVal) return;
-
                 const dateISO = parseDateToISO(dateVal);
                 
-                // Inversión diaria por campaña
-                if (!dailyInvestmentData[dateISO]) {
-                    dailyInvestmentData[dateISO] = {};
-                }
-                if (!dailyInvestmentData[dateISO][name]) {
-                    dailyInvestmentData[dateISO][name] = 0;
-                }
+                if (!dailyInvestmentData[dateISO]) dailyInvestmentData[dateISO] = {};
+                if (!dailyInvestmentData[dateISO][name]) dailyInvestmentData[dateISO][name] = 0;
                 dailyInvestmentData[dateISO][name] += cost;
                 
-                // Alcance diario por región (gráfico original)
-                if (!dailyReachByRegion[dateISO]) {
-                    dailyReachByRegion[dateISO] = {};
-                }
-                if (!dailyReachByRegion[dateISO][name]) {
-                    dailyReachByRegion[dateISO][name] = {};
-                }
-                if (!dailyReachByRegion[dateISO][name][region]) {
-                    dailyReachByRegion[dateISO][name][region] = 0;
-                }
+                if (!dailyReachByRegion[dateISO]) dailyReachByRegion[dateISO] = {};
+                if (!dailyReachByRegion[dateISO][name]) dailyReachByRegion[dateISO][name] = {};
+                if (!dailyReachByRegion[dateISO][name][region]) dailyReachByRegion[dateISO][name][region] = 0;
                 dailyReachByRegion[dateISO][name][region] += reach;
                 
-                // NUEVO: Alcance diario por provincia (agregado de todas las campañas)
-                if (!dailyReachByProvince[dateISO]) {
-                    dailyReachByProvince[dateISO] = {};
-                }
-                if (!dailyReachByProvince[dateISO][region]) {
-                    dailyReachByProvince[dateISO][region] = 0;
-                }
+                if (!dailyReachByProvince[dateISO]) dailyReachByProvince[dateISO] = {};
+                if (!dailyReachByProvince[dateISO][region]) dailyReachByProvince[dateISO][region] = 0;
                 dailyReachByProvince[dateISO][region] += reach;
                 
-                // NUEVO: Alcance diario por provincia Y campaña (para filtrado)
-                if (!dailyReachByProvinceAndCampaign[dateISO]) {
-                    dailyReachByProvinceAndCampaign[dateISO] = {};
-                }
-                if (!dailyReachByProvinceAndCampaign[dateISO][name]) {
-                    dailyReachByProvinceAndCampaign[dateISO][name] = {};
-                }
-                if (!dailyReachByProvinceAndCampaign[dateISO][name][region]) {
-                    dailyReachByProvinceAndCampaign[dateISO][name][region] = 0;
-                }
+                if (!dailyReachByProvinceAndCampaign[dateISO]) dailyReachByProvinceAndCampaign[dateISO] = {};
+                if (!dailyReachByProvinceAndCampaign[dateISO][name]) dailyReachByProvinceAndCampaign[dateISO][name] = {};
+                if (!dailyReachByProvinceAndCampaign[dateISO][name][region]) dailyReachByProvinceAndCampaign[dateISO][name][region] = 0;
                 dailyReachByProvinceAndCampaign[dateISO][name][region] += reach;
                 
                 if (!adGroups[name]) {
@@ -281,11 +242,7 @@ const App = () => {
                     else if (nameLower.includes('brand')) adGroups[name].type = 'branding';
                     else if (nameLower.includes('lead')) adGroups[name].type = 'leads';
                 }
-
-                if (dateISO < adGroups[name].startDate) {
-                    adGroups[name].startDate = dateISO;
-                }
-                
+                if (dateISO < adGroups[name].startDate) adGroups[name].startDate = dateISO;
                 adGroups[name].totalInvestment += cost;
             });
 
@@ -304,29 +261,22 @@ const App = () => {
             })).sort((a, b) => a.date.localeCompare(b.date));
 
             dailyReach = Object.entries(dailyReachByRegion).map(([date, campaigns]) => {
-                const dayData = {
-                    date,
-                    displayDate: formatDateDisplay(date)
-                };
-                
+                const dayData = { date, displayDate: formatDateDisplay(date) };
                 Object.entries(campaigns).forEach(([campaign, regions]) => {
                     dayData[campaign] = Object.values(regions).reduce((sum, reach) => sum + reach, 0);
                 });
-                
                 return dayData;
             }).sort((a, b) => a.date.localeCompare(b.date));
 
-            // MODIFICADO: Procesar alcance por provincia con información de campaña
             dailyProvinceReach = Object.entries(dailyReachByProvinceAndCampaign).map(([date, campaigns]) => ({
                 date,
                 displayDate: formatDateDisplay(date),
-                campaigns: campaigns // Guardar datos por campaña
+                campaigns: campaigns
             })).sort((a, b) => a.date.localeCompare(b.date));
 
         } else {
             processedEvents = results.data.map(row => {
                 let dateVal, nameVal, typeVal, platformVal, investmentVal;
-                
                 if (row['CAMPAÑAS ACTIVAS '] || row['CAMPAÑAS ACTIVAS']) {
                     dateVal = row['FECHA CIRCULACIÓN '] || row['FECHA CIRCULACIÓN'];
                     nameVal = row['COMENTARIOS'] || row['CAMPAÑAS ACTIVAS '] || 'Campaña';
@@ -340,7 +290,6 @@ const App = () => {
                     platformVal = row['Plataforma'] || row['Medio'];
                     investmentVal = row['Inversion'] || 0;
                 }
-                
                 const dateISO = parseDateToISO(dateVal);
                 if (!dateISO || !nameVal) return null;
 
@@ -361,7 +310,6 @@ const App = () => {
                 };
             }).filter(Boolean);
         }
-        
         processedEvents.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
         setMarketingEvents(processedEvents);
         setDailyCampaignData(dailyCampaigns);
@@ -398,11 +346,9 @@ const App = () => {
       const matchAgent = filters.agente === 'Todos' || row.AGENTE === filters.agente;
       const matchProvincia = filters.provincia === 'Todas' || row['Provincia Detectada'] === filters.provincia;
       const matchFuente = filters.fuente === 'Todas' || row.platform === filters.fuente;
-      
       let matchDate = true;
       if (filters.startDate && row.fechaISO < filters.startDate) matchDate = false;
       if (filters.endDate && row.fechaISO > filters.endDate) matchDate = false;
-
       return matchAgent && matchProvincia && matchFuente && matchDate;
     });
   }, [data, filters]);
@@ -448,11 +394,8 @@ const App = () => {
                   'Mendoza': 0,
                   'Resto del País': 0
               };
-              
-              // Si hay campañas guardadas (nuevo formato)
               if (day.campaigns) {
                   if (selectedCampaign === 'Todas') {
-                      // Agregar todas las provincias de todas las campañas
                       Object.values(day.campaigns).forEach(provinces => {
                           Object.entries(provinces).forEach(([province, reach]) => {
                               const group = getProvinceGroup(province);
@@ -460,7 +403,6 @@ const App = () => {
                           });
                       });
                   } else {
-                      // Filtrar solo la campaña seleccionada
                       const campaignData = day.campaigns[selectedCampaign];
                       if (campaignData) {
                           Object.entries(campaignData).forEach(([province, reach]) => {
@@ -470,7 +412,6 @@ const App = () => {
                       }
                   }
               } else {
-                  // Formato antiguo (compatibilidad)
                   Object.keys(day).forEach(key => {
                       if (key !== 'date' && key !== 'displayDate') {
                           const group = getProvinceGroup(key);
@@ -478,7 +419,6 @@ const App = () => {
                       }
                   });
               }
-              
               return result;
           });
   }, [dailyProvinceReachData, filters.startDate, filters.endDate, selectedCampaign]);
@@ -487,9 +427,7 @@ const App = () => {
       const campaigns = new Set();
       dailyCampaignData.forEach(day => {
           Object.keys(day).forEach(key => {
-              if (key !== 'date' && key !== 'displayDate') {
-                  campaigns.add(key);
-              }
+              if (key !== 'date' && key !== 'displayDate') campaigns.add(key);
           });
       });
       return Array.from(campaigns);
@@ -508,39 +446,32 @@ const App = () => {
       row['Tipo de Evento']?.toLowerCase().includes('cotización') ||
       row['Tipo de Evento']?.toLowerCase().includes('cotizacion')
     ).length;
-
     const currentOfertas = filteredData.filter(row => 
       row['Tipo de Evento']?.toLowerCase().includes('oferta comercial') ||
       row['Tipo de Evento']?.toLowerCase().includes('oferta')
     ).length;
-
     const currentVentas = filteredData.filter(row => 
       row['Tipo de Evento']?.toLowerCase().includes('venta')
     ).length;
-
     const funnelVentas = currentVentas;
     const funnelOfertas = currentOfertas + funnelVentas;
     const funnelCotizaciones = currentCotizaciones + funnelOfertas;
     const funnelLeads = filteredData.length;
-
     const visitasRows = filteredData.filter(row => {
       const v = row.VISITAS?.toLowerCase().trim();
       return v === 'showroom' || v === 'fabrica' || v === 'ambas';
     });
     const totalVisitas = visitasRows.length;
     const ratioVisitasLead = funnelLeads > 0 ? ((totalVisitas / funnelLeads) * 100).toFixed(1) : 0;
-    
     const leadsTucuman = filteredData.filter(row => row['Provincia Detectada']?.toLowerCase().includes('tucum')).length;
     const visitasShowroom = visitasRows.filter(row => row.VISITAS?.toLowerCase().includes('showroom') || row.VISITAS?.toLowerCase().includes('ambas')).length;
     const ratioTucShowroom = leadsTucuman > 0 ? ((visitasShowroom / leadsTucuman) * 100).toFixed(1) : 0;
-
     const visitantesConCotizacion = visitasRows.filter(row => {
       const type = row['Tipo de Evento']?.toLowerCase() || '';
       return type.includes('cotización') || type.includes('cotizacion') || type.includes('oferta') || type.includes('venta');
     }).length;
     const porcentajeVisitasConCotiz = totalVisitas > 0 ? ((visitantesConCotizacion / totalVisitas) * 100).toFixed(1) : 0;
     const convLeadToCotiz = funnelLeads > 0 ? ((funnelCotizaciones / funnelLeads) * 100).toFixed(1) : 0;
-
     const totalInversion = filteredEvents.reduce((acc, curr) => acc + curr.investment, 0);
     const cplGlobal = funnelLeads > 0 ? (totalInversion / funnelLeads).toFixed(0) : 0;
 
@@ -589,6 +520,30 @@ const App = () => {
     return Object.values(agentStats);
   }, [filteredData]);
 
+  // Datos para gráfico unificado de Vendedores
+  const leadsPerAgentByChannel = useMemo(() => {
+    const agentChannelStats = {};
+    filteredData.forEach(row => {
+      const agent = row.AGENTE || 'Sin Agente';
+      const channel = row.platform || 'Otro';
+      if (!agentChannelStats[agent]) agentChannelStats[agent] = { name: agent, WhatsApp: 0, Instagram: 0, Facebook: 0, Otro: 0 };
+      if (['WhatsApp', 'Instagram', 'Facebook', 'Otro'].includes(channel)) agentChannelStats[agent][channel]++;
+    });
+    return Object.values(agentChannelStats);
+  }, [filteredData]);
+
+  const leadsPerAgentByProvince = useMemo(() => {
+    const agentProvinceStats = {};
+    filteredData.forEach(row => {
+      const agent = row.AGENTE || 'Sin Agente';
+      const province = row['Provincia Detectada'] || 'Sin Datos';
+      const provinceGroup = getProvinceGroup(province);
+      if (!agentProvinceStats[agent]) agentProvinceStats[agent] = { name: agent, 'Tucumán': 0, 'Resto del NOA': 0, 'Córdoba': 0, 'Mendoza': 0, 'Resto del País': 0 };
+      agentProvinceStats[agent][provinceGroup]++;
+    });
+    return Object.values(agentProvinceStats);
+  }, [filteredData]);
+
   const geoDistribution = useMemo(() => {
     const provinciaCounts = {};
     filteredData.forEach(row => {
@@ -616,7 +571,6 @@ const App = () => {
       if (provinciaChartType === 'cotizacion' && (type.includes('cotización') || type.includes('cotizacion'))) incluir = true;
       else if (provinciaChartType === 'oferta' && (type.includes('oferta') || type.includes('oferta'))) incluir = true;
       else if (provinciaChartType === 'venta' && type.includes('venta')) incluir = true;
-
       if (incluir) {
         const prov = row['Provincia Detectada']?.trim() || 'Sin Datos';
         provinciaCounts[prov] = (provinciaCounts[prov] || 0) + 1;
@@ -657,19 +611,42 @@ const App = () => {
       if (row.fechaISO) {
         const dateKey = row.fechaISO;
         const displayDate = formatDateDisplay(dateKey);
-        if (!dataByDay[dateKey]) dataByDay[dateKey] = { date: dateKey, name: displayDate, Tucuman: 0, RestoNOA: 0, RestoPais: 0 };
         
+        // Inicializar si no existe
+        if (!dataByDay[dateKey]) {
+            dataByDay[dateKey] = { 
+                date: dateKey, 
+                name: displayDate, 
+                Tucuman: 0, 
+                RestoNOA: 0, 
+                RestoPais: 0,
+                // Agregamos contadores para el Tooltip
+                Pauta: 0, 
+                Organico: 0 
+            };
+        }
+        
+        // Clasificación Regional
         const prov = (row['Provincia Detectada'] || '').toLowerCase();
         const noaProvs = ['salta', 'jujuy', 'santiago', 'catamarca', 'rioja'];
         if (prov.includes('tucum')) dataByDay[dateKey].Tucuman++;
         else if (noaProvs.some(p => prov.includes(p))) dataByDay[dateKey].RestoNOA++;
         else dataByDay[dateKey].RestoPais++;
+
+        // Clasificación Orgánico vs Pauta para Tooltip
+        const platform = (row.platform || '').toLowerCase();
+        if (platform.includes('facebook') || platform.includes('instagram')) {
+            dataByDay[dateKey].Pauta++;
+        } else {
+            // Asumimos WhatsApp y Otros como orgánico/directo en este contexto
+            dataByDay[dateKey].Organico++;
+        }
       }
     });
 
     filteredEvents.forEach(ev => {
         if (ev.dateISO && !dataByDay[ev.dateISO]) {
-            dataByDay[ev.dateISO] = { date: ev.dateISO, name: formatDateDisplay(ev.dateISO), Tucuman: 0, RestoNOA: 0, RestoPais: 0 };
+            dataByDay[ev.dateISO] = { date: ev.dateISO, name: formatDateDisplay(ev.dateISO), Tucuman: 0, RestoNOA: 0, RestoPais: 0, Pauta: 0, Organico: 0 };
         }
     });
 
@@ -700,12 +677,9 @@ const App = () => {
       if (row.fechaISO) {
         const parts = row.fechaISO.split('-');
         const month = `${parts[1]}/${parts[0]}`; 
-        
         if (!monthPlatform[month]) monthPlatform[month] = { name: month, Instagram: 0, Facebook: 0, WhatsApp: 0, Otro: 0 };
         const platform = row.platform || 'Otro';
-        if (['Instagram', 'Facebook', 'WhatsApp', 'Otro'].includes(platform)) {
-          monthPlatform[month][platform]++;
-        }
+        if (['Instagram', 'Facebook', 'WhatsApp', 'Otro'].includes(platform)) monthPlatform[month][platform]++;
       }
     });
     return Object.values(monthPlatform).sort((a, b) => {
@@ -753,6 +727,8 @@ const App = () => {
   const toggleKPICollapse = (kpiId) => setCollapsedKPIs(prev => ({ ...prev, [kpiId]: !prev[kpiId] }));
   const toggleExpand = (chartId) => setExpandedChart(expandedChart === chartId ? null : chartId);
 
+  // --- TOOLTIPS PERSONALIZADOS ---
+
   const CustomTooltip = ({ active, payload, label, total, totalMap }) => {
     if (active && payload && payload.length) {
       return (
@@ -789,11 +765,43 @@ const App = () => {
     return null;
   };
 
+  // Tooltip ESPECIAL para Evolución Diaria con datos de Pauta/Orgánico
+  const DailyRegionTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      const totalDay = (data.Tucuman || 0) + (data.RestoNOA || 0) + (data.RestoPais || 0);
+      
+      return (
+        <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50">
+          <p className="font-bold mb-2">{label}</p>
+          {/* Desglose por Región (Visual) */}
+          {payload.map((entry, index) => (
+            <p key={index} style={{ color: entry.fill }}>
+                {entry.name}: {entry.value}
+            </p>
+          ))}
+          
+          <div className="border-t my-2 pt-1"></div>
+          
+          {/* Desglose Pauta vs Orgánico (Informativo) */}
+          <p className="text-xs text-gray-600">
+             <span className="font-semibold text-blue-600">Social/Pauta:</span> {data.Pauta || 0}
+          </p>
+          <p className="text-xs text-gray-600">
+             <span className="font-semibold text-green-600">Orgánico/Directo:</span> {data.Organico || 0}
+          </p>
+
+          <div className="border-t mt-2 pt-1 font-bold text-gray-800">Total: {totalDay}</div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   const ProvinceReachTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       const totalReach = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
       const validPayload = payload.filter(entry => entry.value > 0);
-      
       return (
         <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50">
           <p className="font-bold mb-2">{label}</p>
@@ -805,9 +813,7 @@ const App = () => {
               </p>
             );
           })}
-          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
-            Total: {totalReach.toLocaleString()} visitas
-          </div>
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">Total: {totalReach.toLocaleString()} visitas</div>
         </div>
       );
     }
@@ -818,7 +824,6 @@ const App = () => {
     if (active && payload && payload.length) {
       const totalInvestment = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
       const validPayload = payload.filter(entry => entry.value > 0);
-      
       return (
         <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50 max-w-sm">
           <p className="font-bold mb-2">{label}</p>
@@ -827,14 +832,12 @@ const App = () => {
               const percentage = totalInvestment > 0 ? ((entry.value / totalInvestment) * 100).toFixed(1) : 0;
               return (
                 <p key={index} style={{ color: entry.fill }} className="text-xs truncate">
-                  {entry.dataKey}: ${Math.round(entry.value).toLocaleString()} ({percentage}%)
+                  {entry.dataKey}: ${ Math.round(entry.value).toLocaleString()} ({percentage}%)
                 </p>
               );
             })}
           </div>
-          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
-            Total: ${Math.round(totalInvestment).toLocaleString()}
-          </div>
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">Total: ${Math.round(totalInvestment).toLocaleString()}</div>
         </div>
       );
     }
@@ -845,7 +848,6 @@ const App = () => {
     if (active && payload && payload.length) {
       const totalReach = payload.reduce((sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0), 0);
       const validPayload = payload.filter(entry => entry.value > 0);
-      
       return (
         <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50 max-w-sm">
           <p className="font-bold mb-2">{label}</p>
@@ -859,9 +861,7 @@ const App = () => {
               );
             })}
           </div>
-          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">
-            Total: {totalReach.toLocaleString()} visitas
-          </div>
+          <div className="border-t mt-2 pt-1 font-semibold text-gray-600">Total: {totalReach.toLocaleString()} visitas</div>
         </div>
       );
     }
@@ -1023,224 +1023,293 @@ const App = () => {
           <KPICard id="rel-visita-cotiz" icon={Award} value={`${kpis.porcentajeVisitasConCotiz}%`} label="Visitas con Cotización" subtext={`${kpis.visitantesConCotizacion} de ${kpis.totalVisitas} ya cotizaron`} gradient="from-pink-500 to-pink-600" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ChartContainer id="funnel" title="Embudo de Ventas" height={300}>
-            <BarChart data={funnelData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" radius={[8, 8, 0, 0]}>{funnelData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}</Bar></BarChart>
-          </ChartContainer>
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <Users className="w-6 h-6" />
+            Análisis Comercial
+          </h2>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ChartContainer id="funnel" title="Embudo de Ventas" height={300}>
+              <BarChart data={funnelData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" radius={[8, 8, 0, 0]}>{funnelData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}</Bar></BarChart>
+            </ChartContainer>
 
-          <ChartContainer id="daily-region" title="Evolución Diaria + Eventos Marketing" height={500}>
-            <BarChart data={dailyRegionData} margin={{ bottom: 120 }}> 
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="date" 
-                tickFormatter={formatDateDisplay} 
-                interval="preserveStartEnd"
-              />
-              <YAxis />
-              <Tooltip content={<StackedTooltip />} />
-              <Legend wrapperStyle={{ top: 0 }} />
-              
-              <Bar dataKey="Tucuman" stackId="a" fill="#f59e0b" name="Tucumán" />
-              <Bar dataKey="RestoNOA" stackId="a" fill="#3b82f6" name="Resto NOA" />
-              <Bar dataKey="RestoPais" stackId="a" fill="#10b981" name="Resto País" />
+            <ChartContainer id="agent-performance" title="Rendimiento por Vendedor" height={300}>
+              <BarChart data={agentPerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip totalMap={{'Leads': kpis.funnel.leads, 'Cotizaciones': kpis.funnel.cotizaciones, 'OfertasComerciales': kpis.funnel.ofertas, 'Ventas': kpis.funnel.ventas}} />} /><Legend /><Bar dataKey="Leads" fill="#3b82f6" radius={[8, 8, 0, 0]} /><Bar dataKey="Cotizaciones" fill="#10b981" radius={[8, 8, 0, 0]} /><Bar dataKey="OfertasComerciales" fill="#f59e0b" radius={[8, 8, 0, 0]} /><Bar dataKey="Ventas" fill="#ef4444" radius={[8, 8, 0, 0]} /></BarChart>
+            </ChartContainer>
 
-              {filteredEvents.map((event, idx) => {
-                  const lane = idx % 6; 
-                  const verticalOffset = 60 + (lane * 25); 
-                  const eventColor = getCampaignColor(event.name);
-                  return (
-                    <ReferenceLine 
-                        key={idx} 
-                        x={event.dateISO} 
-                        stroke={eventColor}
-                        strokeDasharray="3 3"
-                        strokeWidth={3}
-                        label={{ 
-                            position: 'insideBottom',
-                            value: event.name, 
-                            fill: eventColor,
-                            fontSize: 11,
-                            fontWeight: 'bold',
-                            angle: 0, 
-                            dy: verticalOffset,
-                        }} 
-                    />
-                  );
-              })}
-            </BarChart>
-          </ChartContainer>
-
-          {filteredDailyCampaigns.length > 0 && (
-            <div className="lg:col-span-2">
-              <ChartContainer id="campaign-investment" title="Inversión Diaria por Publicación (ARS)" height={400}>
-                <BarChart data={filteredDailyCampaigns} margin={{ bottom: 80 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="displayDate" 
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis />
-                  <Tooltip content={<CampaignInvestmentTooltip />} />
-                  <Legend 
-                    wrapperStyle={{ 
-                      paddingTop: '20px',
-                      maxHeight: '120px',
-                      overflowY: 'auto'
-                    }}
-                    iconSize={10}
-                  />
-                  {uniqueCampaigns.map((campaign) => (
-                    <Bar 
-                      key={campaign}
-                      dataKey={campaign}
-                      stackId="campaigns"
-                      fill={getCampaignColor(campaign)}
-                      name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
-                    />
-                  ))}
-                </BarChart>
-              </ChartContainer>
-            </div>
-          )}
-
-          {filteredDailyReach.length > 0 && (
-            <div className="lg:col-span-2">
-              <ChartContainer id="campaign-reach" title="Alcance Diario de Publicaciones (Visitas Únicas)" height={400}>
-                <BarChart data={filteredDailyReach} margin={{ bottom: 80 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="displayDate" 
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis />
-                  <Tooltip content={<CampaignReachTooltip />} />
-                  <Legend 
-                    wrapperStyle={{ 
-                      paddingTop: '20px',
-                      maxHeight: '120px',
-                      overflowY: 'auto'
-                    }}
-                    iconSize={10}
-                  />
-                  {uniqueCampaigns.map((campaign) => (
-                    <Bar 
-                      key={campaign}
-                      dataKey={campaign}
-                      stackId="reach"
-                      fill={getCampaignColor(campaign)}
-                      name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
-                    />
-                  ))}
-                </BarChart>
-              </ChartContainer>
-            </div>
-          )}
-
-          {filteredDailyProvinceReach.length > 0 && (
-            <div className="lg:col-span-2">
-              <ChartContainer 
-                id="province-reach" 
-                title="Alcance Diario por Región (Visitas Únicas)" 
-                height={400}
+            {/* GRÁFICO UNIFICADO: Desempeño de Vendedores (Por Canal / Por Región) */}
+            <ChartContainer 
+                id="agent-performance-unified" 
+                title="Desempeño de Vendedores" 
+                height={350}
                 customContent={
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Filtrar por Publicación
-                    </label>
-                    <select 
-                      value={selectedCampaign} 
-                      onChange={(e) => setSelectedCampaign(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
-                    >
-                      <option value="Todas">Todas las publicaciones</option>
-                      {uniqueCampaigns.map(campaign => (
-                        <option key={campaign} value={campaign}>{campaign}</option>
-                      ))}
-                    </select>
-                  </div>
+                    <div className="mb-4 flex justify-end">
+                        <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg">
+                            <button 
+                                onClick={() => setAgentViewMode('channel')}
+                                className={`px-3 py-1 rounded-md text-sm font-medium transition ${agentViewMode === 'channel' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                            >
+                                Por Canal
+                            </button>
+                            <button 
+                                onClick={() => setAgentViewMode('region')}
+                                className={`px-3 py-1 rounded-md text-sm font-medium transition ${agentViewMode === 'region' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                            >
+                                Por Región
+                            </button>
+                        </div>
+                    </div>
                 }
-              >
-                <BarChart data={filteredDailyProvinceReach} margin={{ bottom: 80 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="displayDate" 
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis />
-                  <Tooltip content={<ProvinceReachTooltip />} />
-                  <Legend 
-                    wrapperStyle={{ 
-                      paddingTop: '20px',
-                      maxHeight: '120px',
-                      overflowY: 'auto'
-                    }}
-                    iconSize={10}
-                  />
-                  {uniqueProvinceGroups.map((group) => (
-                    <Bar 
-                      key={group}
-                      dataKey={group}
-                      stackId="provinces"
-                      fill={GROUPED_PROVINCE_COLORS[group]}
-                      name={group}
-                    />
-                  ))}
-                </BarChart>
+            >
+              <BarChart data={agentViewMode === 'channel' ? leadsPerAgentByChannel : leadsPerAgentByProvince}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip content={<StackedTooltip />} />
+                <Legend />
+                
+                {agentViewMode === 'channel' ? (
+                    <>
+                        <Bar dataKey="WhatsApp" stackId="a" fill="#25d366" name="WhatsApp" />
+                        <Bar dataKey="Instagram" stackId="a" fill="#e4405f" name="Instagram" />
+                        <Bar dataKey="Facebook" stackId="a" fill="#1877f2" name="Facebook" />
+                        <Bar dataKey="Otro" stackId="a" fill="#9ca3af" name="Otro" />
+                    </>
+                ) : (
+                    <>
+                        <Bar dataKey="Tucumán" stackId="a" fill={GROUPED_PROVINCE_COLORS['Tucumán']} name="Tucumán" />
+                        <Bar dataKey="Resto del NOA" stackId="a" fill={GROUPED_PROVINCE_COLORS['Resto del NOA']} name="Resto del NOA" />
+                        <Bar dataKey="Córdoba" stackId="a" fill={GROUPED_PROVINCE_COLORS['Córdoba']} name="Córdoba" />
+                        <Bar dataKey="Mendoza" stackId="a" fill={GROUPED_PROVINCE_COLORS['Mendoza']} name="Mendoza" />
+                        <Bar dataKey="Resto del País" stackId="a" fill={GROUPED_PROVINCE_COLORS['Resto del País']} name="Resto del País" />
+                    </>
+                )}
+              </BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="daily-region" title="Evolución Diaria + Eventos Marketing" height={500}>
+              <BarChart data={dailyRegionData} margin={{ bottom: 120 }}> 
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="date" 
+                  tickFormatter={formatDateDisplay} 
+                  interval="preserveStartEnd"
+                />
+                <YAxis />
+                {/* TOOLTIP INTELIGENTE CON DESGLOSE ORGÁNICO/PAUTA */}
+                <Tooltip content={<DailyRegionTooltip />} />
+                <Legend wrapperStyle={{ top: 0 }} />
+                
+                <Bar dataKey="Tucuman" stackId="a" fill="#f59e0b" name="Tucumán" />
+                <Bar dataKey="RestoNOA" stackId="a" fill="#3b82f6" name="Resto NOA" />
+                <Bar dataKey="RestoPais" stackId="a" fill="#10b981" name="Resto País" />
+
+                {filteredEvents.map((event, idx) => {
+                    const lane = idx % 6; 
+                    const verticalOffset = 60 + (lane * 25); 
+                    const eventColor = getCampaignColor(event.name);
+                    return (
+                      <ReferenceLine 
+                          key={idx} 
+                          x={event.dateISO} 
+                          stroke={eventColor}
+                          strokeDasharray="3 3"
+                          strokeWidth={3}
+                          label={{ 
+                              position: 'insideBottom',
+                              value: event.name, 
+                              fill: eventColor,
+                              fontSize: 11,
+                              fontWeight: 'bold',
+                              angle: 0, 
+                              dy: verticalOffset,
+                          }} 
+                      />
+                    );
+                })}
+              </BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="geo-distribution" title="Distribución por Provincia (Min. 4)" height={300} customContent={
+                <div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Provincia</label><select value={filters.provincia} onChange={(e) => setFilters({ ...filters, provincia: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">{uniqueProvincias.map(prov => <option key={prov} value={prov}>{prov}</option>)}</select></div>
+            }>
+              <BarChart data={geoDistribution}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} interval={0} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" fill="#8884d8">{geoDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Bar></BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="provincia-analysis" title="Análisis por Provincia" height={350} customContent={
+                <div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Análisis</label><select value={provinciaChartType} onChange={(e) => setProvinciaChartType(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"><option value="cotizacion">Cotizaciones</option><option value="oferta">Ofertas Comerciales</option><option value="venta">Ventas</option></select></div>
+            }>
+              <BarChart data={datosPorProvincia}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} /><YAxis /><Tooltip content={<CustomTooltip total={totalMetricaProvincia} />} /><Bar dataKey="value" fill={provinciaChartType === 'cotizacion' ? '#10b981' : provinciaChartType === 'oferta' ? '#f59e0b' : '#ef4444'} radius={[8, 8, 0, 0]} /></BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="visitas-tipo" title="Tipos de Visitas" height={300}>
+              <BarChart data={visitasData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} /></BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="visitas-agente" title="Visitas Cerradas por Agente" height={300}>
+              <BarChart data={visitasPorAgente}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="Visitas" fill="#ec4899" radius={[8, 8, 0, 0]} /></BarChart>
+            </ChartContainer>
+
+            <ChartContainer id="monthly-trend" title="Tendencia Mensual" height={300}>
+              <LineChart data={monthlyTrend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Legend /><Line type="monotone" dataKey="Contactos" stroke="#3b82f6" strokeWidth={3} dot={{ r: 6 }} /></LineChart>
+            </ChartContainer>
+
+            <div className="lg:col-span-2">
+              <ChartContainer id="social-comparison" title="Comparativa de Canales por Mes" height={300}>
+                <BarChart data={socialByMonth}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<StackedTooltip />} /><Legend /><Bar dataKey="Instagram" fill="#e4405f" radius={[8, 8, 0, 0]} /><Bar dataKey="Facebook" fill="#1877f2" radius={[8, 8, 0, 0]} /><Bar dataKey="WhatsApp" fill="#25d366" radius={[8, 8, 0, 0]} /><Bar dataKey="Otro" fill="#9ca3af" radius={[8, 8, 0, 0]} /></BarChart>
               </ChartContainer>
             </div>
-          )}
 
-          <ChartContainer id="agent-performance" title="Rendimiento por Vendedor" height={300}>
-            <BarChart data={agentPerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip totalMap={{'Leads': kpis.funnel.leads, 'Cotizaciones': kpis.funnel.cotizaciones, 'OfertasComerciales': kpis.funnel.ofertas, 'Ventas': kpis.funnel.ventas}} />} /><Legend /><Bar dataKey="Leads" fill="#3b82f6" radius={[8, 8, 0, 0]} /><Bar dataKey="Cotizaciones" fill="#10b981" radius={[8, 8, 0, 0]} /><Bar dataKey="OfertasComerciales" fill="#f59e0b" radius={[8, 8, 0, 0]} /><Bar dataKey="Ventas" fill="#ef4444" radius={[8, 8, 0, 0]} /></BarChart>
-          </ChartContainer>
+            <ChartContainer id="weekly-rhythm" title="Ritmo Semanal" height={300}>
+              <BarChart data={weeklyRhythm}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={0} textAnchor="end" height={80} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="Contactos" fill="#8b5cf6" radius={[8, 8, 0, 0]} /></BarChart>
+            </ChartContainer>
 
-          <ChartContainer id="geo-distribution" title="Distribución por Provincia (Min. 4)" height={300} customContent={
-              <div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Provincia</label><select value={filters.provincia} onChange={(e) => setFilters({ ...filters, provincia: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">{uniqueProvincias.map(prov => <option key={prov} value={prov}>{prov}</option>)}</select></div>
-          }>
-            <BarChart data={geoDistribution}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} interval={0} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" fill="#8884d8">{geoDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Bar></BarChart>
-          </ChartContainer>
-
-          <ChartContainer id="provincia-analysis" title="Análisis por Provincia" height={350} customContent={
-              <div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Análisis</label><select value={provinciaChartType} onChange={(e) => setProvinciaChartType(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"><option value="cotizacion">Cotizaciones</option><option value="oferta">Ofertas Comerciales</option><option value="venta">Ventas</option></select></div>
-          }>
-            <BarChart data={datosPorProvincia}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} /><YAxis /><Tooltip content={<CustomTooltip total={totalMetricaProvincia} />} /><Bar dataKey="value" fill={provinciaChartType === 'cotizacion' ? '#10b981' : provinciaChartType === 'oferta' ? '#f59e0b' : '#ef4444'} radius={[8, 8, 0, 0]} /></BarChart>
-          </ChartContainer>
-
-          <ChartContainer id="visitas-tipo" title="Tipos de Visitas" height={300}>
-            <BarChart data={visitasData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} /></BarChart>
-          </ChartContainer>
-
-          <ChartContainer id="visitas-agente" title="Visitas Cerradas por Agente" height={300}>
-            <BarChart data={visitasPorAgente}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="Visitas" fill="#ec4899" radius={[8, 8, 0, 0]} /></BarChart>
-          </ChartContainer>
-
-          <ChartContainer id="monthly-trend" title="Tendencia Mensual" height={300}>
-            <LineChart data={monthlyTrend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Legend /><Line type="monotone" dataKey="Contactos" stroke="#3b82f6" strokeWidth={3} dot={{ r: 6 }} /></LineChart>
-          </ChartContainer>
-
-          <div className="lg:col-span-2">
-            <ChartContainer id="social-comparison" title="Comparativa de Canales por Mes" height={300}>
-              <BarChart data={socialByMonth}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<StackedTooltip />} /><Legend /><Bar dataKey="Instagram" fill="#e4405f" radius={[8, 8, 0, 0]} /><Bar dataKey="Facebook" fill="#1877f2" radius={[8, 8, 0, 0]} /><Bar dataKey="WhatsApp" fill="#25d366" radius={[8, 8, 0, 0]} /><Bar dataKey="Otro" fill="#9ca3af" radius={[8, 8, 0, 0]} /></BarChart>
+            <ChartContainer id="quality-ranking" title="Ranking de Calidad por Canal" height={300}>
+              <BarChart data={qualityRanking} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 30]} /><YAxis dataKey="name" type="category" width={100} /><Tooltip formatter={(value, name, props) => { if (name === 'conversionDisplay') { return [`${props.payload.conversion}% (${props.payload.cotizaciones}/${props.payload.leads} leads)`, 'Conversión']; } return value; }} /><Bar dataKey="conversionDisplay" fill="#10b981" radius={[0, 8, 8, 0]} /></BarChart>
             </ChartContainer>
           </div>
-
-          <ChartContainer id="weekly-rhythm" title="Ritmo Semanal" height={300}>
-            <BarChart data={weeklyRhythm}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={0} textAnchor="end" height={80} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="Contactos" fill="#8b5cf6" radius={[8, 8, 0, 0]} /></BarChart>
-          </ChartContainer>
-
-          <ChartContainer id="quality-ranking" title="Ranking de Calidad por Canal" height={300}>
-            <BarChart data={qualityRanking} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 30]} /><YAxis dataKey="name" type="category" width={100} /><Tooltip formatter={(value, name, props) => { if (name === 'conversionDisplay') { return [`${props.payload.conversion}% (${props.payload.cotizaciones}/${props.payload.leads} leads)`, 'Conversión']; } return value; }} /><Bar dataKey="conversionDisplay" fill="#10b981" radius={[0, 8, 8, 0]} /></BarChart>
-          </ChartContainer>
         </div>
+
+        {(filteredDailyCampaigns.length > 0 || filteredDailyReach.length > 0 || filteredDailyProvinceReach.length > 0) && (
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Megaphone className="w-6 h-6" />
+              Análisis de Publicidad
+            </h2>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {filteredDailyCampaigns.length > 0 && (
+                <div className="lg:col-span-2">
+                  <ChartContainer id="campaign-investment" title="Inversión Diaria por Publicación (ARS)" height={400}>
+                    <BarChart data={filteredDailyCampaigns} margin={{ bottom: 80 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="displayDate" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis />
+                      <Tooltip content={<CampaignInvestmentTooltip />} />
+                      <Legend 
+                        wrapperStyle={{ 
+                          paddingTop: '20px',
+                          maxHeight: '120px',
+                          overflowY: 'auto'
+                        }}
+                        iconSize={10}
+                      />
+                      {uniqueCampaigns.map((campaign) => (
+                        <Bar 
+                          key={campaign}
+                          dataKey={campaign}
+                          stackId="campaigns"
+                          fill={getCampaignColor(campaign)}
+                          name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
+                        />
+                      ))}
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+              )}
+
+              {filteredDailyReach.length > 0 && (
+                <div className="lg:col-span-2">
+                  <ChartContainer id="campaign-reach" title="Alcance Diario de Publicaciones (Visitas Únicas)" height={400}>
+                    <BarChart data={filteredDailyReach} margin={{ bottom: 80 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="displayDate" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis />
+                      <Tooltip content={<CampaignReachTooltip />} />
+                      <Legend 
+                        wrapperStyle={{ 
+                          paddingTop: '20px',
+                          maxHeight: '120px',
+                          overflowY: 'auto'
+                        }}
+                        iconSize={10}
+                      />
+                      {uniqueCampaigns.map((campaign) => (
+                        <Bar 
+                          key={campaign}
+                          dataKey={campaign}
+                          stackId="reach"
+                          fill={getCampaignColor(campaign)}
+                          name={campaign.length > 30 ? campaign.substring(0, 27) + '...' : campaign}
+                        />
+                      ))}
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+              )}
+
+              {filteredDailyProvinceReach.length > 0 && (
+                <div className="lg:col-span-2">
+                  <ChartContainer 
+                    id="province-reach" 
+                    title="Alcance Diario por Región (Visitas Únicas)" 
+                    height={400}
+                    customContent={
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Filtrar por Publicación
+                        </label>
+                        <select 
+                          value={selectedCampaign} 
+                          onChange={(e) => setSelectedCampaign(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                        >
+                          <option value="Todas">Todas las publicaciones</option>
+                          {uniqueCampaigns.map(campaign => (
+                            <option key={campaign} value={campaign}>{campaign}</option>
+                          ))}
+                        </select>
+                      </div>
+                    }
+                  >
+                    <BarChart data={filteredDailyProvinceReach} margin={{ bottom: 80 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="displayDate" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis />
+                      <Tooltip content={<ProvinceReachTooltip />} />
+                      <Legend 
+                        wrapperStyle={{ 
+                          paddingTop: '20px',
+                          maxHeight: '120px',
+                          overflowY: 'auto'
+                        }}
+                        iconSize={10}
+                      />
+                      {uniqueProvinceGroups.map((group) => (
+                        <Bar 
+                          key={group}
+                          dataKey={group}
+                          stackId="provinces"
+                          fill={GROUPED_PROVINCE_COLORS[group]}
+                          name={group}
+                        />
+                      ))}
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
