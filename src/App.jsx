@@ -85,8 +85,7 @@ const App = () => {
   const [provinciaChartType, setProvinciaChartType] = useState('cotizacion');
   const [selectedCampaign, setSelectedCampaign] = useState('Todas');
   
-  // Nuevo estado para alternar la vista del gráfico unificado
-  const [agentViewMode, setAgentViewMode] = useState('channel'); // 'channel' o 'region'
+  const [agentViewMode, setAgentViewMode] = useState('channel'); 
 
   const [collapsedCharts, setCollapsedCharts] = useState({});
   const [collapsedKPIs, setCollapsedKPIs] = useState({});
@@ -95,8 +94,8 @@ const App = () => {
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
   
   const PROVINCE_COLORS = {
-    'Tucumán': '#ef4444',
-    'Tucuman': '#ef4444',
+    'Tucumán': '#ef4444', // ROJO PEDIDO
+    'Tucuman': '#ef4444', 
     'Córdoba': '#3b82f6',
     'Cordoba': '#3b82f6',
     'Santiago del Estero': '#10b981',
@@ -151,7 +150,7 @@ const App = () => {
   };
 
   const GROUPED_PROVINCE_COLORS = {
-    'Tucumán': '#ef4444',
+    'Tucumán': '#ef4444', // ROJO PEDIDO
     'Resto del NOA': '#f59e0b',
     'Córdoba': '#3b82f6',
     'Mendoza': '#8b5cf6',
@@ -457,20 +456,38 @@ const App = () => {
     const funnelOfertas = currentOfertas + funnelVentas;
     const funnelCotizaciones = currentCotizaciones + funnelOfertas;
     const funnelLeads = filteredData.length;
+    
+    // LOGICA VISITAS PONDERADA (Ambas = 2, Fabrica/Showroom = 1)
+    const totalVisitasWeighted = filteredData.reduce((acc, row) => {
+        const v = row.VISITAS?.toLowerCase().trim();
+        if (v.includes('ambas')) return acc + 2; 
+        if (v.includes('showroom') || v.includes('fabrica') || v.includes('fábrica')) return acc + 1;
+        return acc;
+    }, 0);
+
+    const leadsTucumanRows = filteredData.filter(row => row['Provincia Detectada']?.toLowerCase().includes('tucum'));
+    const leadsTucuman = leadsTucumanRows.length;
+    
+    const visitasTucumanWeighted = leadsTucumanRows.reduce((acc, row) => {
+        const v = row.VISITAS?.toLowerCase().trim();
+        if (v.includes('ambas')) return acc + 2; 
+        if (v.includes('showroom') || v.includes('fabrica') || v.includes('fábrica')) return acc + 1;
+        return acc;
+    }, 0);
+
+    const ratioVisitasLead = funnelLeads > 0 ? ((totalVisitasWeighted / funnelLeads) * 100).toFixed(1) : 0;
+    const ratioTucShowroom = leadsTucuman > 0 ? ((visitasTucumanWeighted / leadsTucuman) * 100).toFixed(1) : 0;
+    
     const visitasRows = filteredData.filter(row => {
       const v = row.VISITAS?.toLowerCase().trim();
       return v === 'showroom' || v === 'fabrica' || v === 'ambas';
     });
-    const totalVisitas = visitasRows.length;
-    const ratioVisitasLead = funnelLeads > 0 ? ((totalVisitas / funnelLeads) * 100).toFixed(1) : 0;
-    const leadsTucuman = filteredData.filter(row => row['Provincia Detectada']?.toLowerCase().includes('tucum')).length;
-    const visitasShowroom = visitasRows.filter(row => row.VISITAS?.toLowerCase().includes('showroom') || row.VISITAS?.toLowerCase().includes('ambas')).length;
-    const ratioTucShowroom = leadsTucuman > 0 ? ((visitasShowroom / leadsTucuman) * 100).toFixed(1) : 0;
     const visitantesConCotizacion = visitasRows.filter(row => {
       const type = row['Tipo de Evento']?.toLowerCase() || '';
       return type.includes('cotización') || type.includes('cotizacion') || type.includes('oferta') || type.includes('venta');
     }).length;
-    const porcentajeVisitasConCotiz = totalVisitas > 0 ? ((visitantesConCotizacion / totalVisitas) * 100).toFixed(1) : 0;
+    
+    const porcentajeVisitasConCotiz = visitasRows.length > 0 ? ((visitantesConCotizacion / visitasRows.length) * 100).toFixed(1) : 0;
     const convLeadToCotiz = funnelLeads > 0 ? ((funnelCotizaciones / funnelLeads) * 100).toFixed(1) : 0;
     const totalInversion = filteredEvents.reduce((acc, curr) => acc + curr.investment, 0);
     const cplGlobal = funnelLeads > 0 ? (totalInversion / funnelLeads).toFixed(0) : 0;
@@ -483,14 +500,13 @@ const App = () => {
         ventas: funnelVentas
       },
       cotizacionesActivas: currentCotizaciones,
-      totalVisitas,
+      totalVisitas: totalVisitasWeighted,
       ratioVisitasLead,
       ratioTucShowroom,
       porcentajeVisitasConCotiz,
       visitantesConCotizacion,
       convLeadToCotiz,
       leadsTucuman,
-      visitasShowroom,
       totalInversion,
       cplGlobal
     };
@@ -544,6 +560,23 @@ const App = () => {
     return Object.values(agentProvinceStats);
   }, [filteredData]);
 
+  // LOGICA VISITAS APILADAS POR AGENTE (Ambas suma 2 en altura = value 2)
+  const visitasApiladasPorAgente = useMemo(() => {
+    const stats = {};
+    filteredData.forEach(row => {
+        const v = row.VISITAS?.toLowerCase().trim();
+        const agent = row.AGENTE || 'Sin Agente';
+        if (!['showroom', 'fabrica', 'fábrica', 'ambas'].some(t => v.includes(t))) return;
+
+        if (!stats[agent]) stats[agent] = { name: agent, Showroom: 0, Fabrica: 0, Ambas: 0 };
+
+        if (v.includes('ambas')) stats[agent].Ambas += 2; // VALE DOBLE EN ALTURA
+        else if (v.includes('showroom')) stats[agent].Showroom++;
+        else if (v.includes('fabrica') || v.includes('fábrica')) stats[agent].Fabrica++;
+    });
+    return Object.values(stats);
+  }, [filteredData]);
+
   const geoDistribution = useMemo(() => {
     const provinciaCounts = {};
     filteredData.forEach(row => {
@@ -582,29 +615,6 @@ const App = () => {
       .sort((a, b) => b.value - a.value);
   }, [filteredData, provinciaChartType]);
 
-  const visitasData = useMemo(() => {
-    const visitaCounts = { 'Showroom': 0, 'Fábrica': 0, 'Ambas': 0 };
-    filteredData.forEach(row => {
-      const visita = row.VISITAS?.toLowerCase().trim();
-      if (visita === 'showroom') visitaCounts['Showroom']++;
-      else if (visita === 'fabrica') visitaCounts['Fábrica']++;
-      else if (visita === 'ambas') visitaCounts['Ambas']++;
-    });
-    return Object.entries(visitaCounts).map(([name, value]) => ({ name, value })).filter(item => item.value > 0);
-  }, [filteredData]);
-
-  const visitasPorAgente = useMemo(() => {
-    const agentVisitas = {};
-    filteredData.forEach(row => {
-      const visita = row.VISITAS?.toLowerCase().trim();
-      if (visita === 'showroom' || visita === 'fabrica' || visita === 'ambas') {
-        const agent = row.AGENTE || 'Sin Agente';
-        agentVisitas[agent] = (agentVisitas[agent] || 0) + 1;
-      }
-    });
-    return Object.entries(agentVisitas).map(([name, value]) => ({ name, Visitas: value })).sort((a, b) => b.Visitas - a.Visitas);
-  }, [filteredData]);
-
   const dailyRegionData = useMemo(() => {
     const dataByDay = {};
     filteredData.forEach(row => {
@@ -612,7 +622,6 @@ const App = () => {
         const dateKey = row.fechaISO;
         const displayDate = formatDateDisplay(dateKey);
         
-        // Inicializar si no existe
         if (!dataByDay[dateKey]) {
             dataByDay[dateKey] = { 
                 date: dateKey, 
@@ -620,25 +629,21 @@ const App = () => {
                 Tucuman: 0, 
                 RestoNOA: 0, 
                 RestoPais: 0,
-                // Agregamos contadores para el Tooltip
                 Pauta: 0, 
                 Organico: 0 
             };
         }
         
-        // Clasificación Regional
         const prov = (row['Provincia Detectada'] || '').toLowerCase();
         const noaProvs = ['salta', 'jujuy', 'santiago', 'catamarca', 'rioja'];
         if (prov.includes('tucum')) dataByDay[dateKey].Tucuman++;
         else if (noaProvs.some(p => prov.includes(p))) dataByDay[dateKey].RestoNOA++;
         else dataByDay[dateKey].RestoPais++;
 
-        // Clasificación Orgánico vs Pauta para Tooltip
         const platform = (row.platform || '').toLowerCase();
         if (platform.includes('facebook') || platform.includes('instagram')) {
             dataByDay[dateKey].Pauta++;
         } else {
-            // Asumimos WhatsApp y Otros como orgánico/directo en este contexto
             dataByDay[dateKey].Organico++;
         }
       }
@@ -765,7 +770,6 @@ const App = () => {
     return null;
   };
 
-  // Tooltip ESPECIAL para Evolución Diaria con datos de Pauta/Orgánico
   const DailyRegionTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -774,23 +778,18 @@ const App = () => {
       return (
         <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50">
           <p className="font-bold mb-2">{label}</p>
-          {/* Desglose por Región (Visual) */}
           {payload.map((entry, index) => (
             <p key={index} style={{ color: entry.fill }}>
                 {entry.name}: {entry.value}
             </p>
           ))}
-          
           <div className="border-t my-2 pt-1"></div>
-          
-          {/* Desglose Pauta vs Orgánico (Informativo) */}
           <p className="text-xs text-gray-600">
              <span className="font-semibold text-blue-600">Social/Pauta:</span> {data.Pauta || 0}
           </p>
           <p className="text-xs text-gray-600">
              <span className="font-semibold text-green-600">Orgánico/Directo:</span> {data.Organico || 0}
           </p>
-
           <div className="border-t mt-2 pt-1 font-bold text-gray-800">Total: {totalDay}</div>
         </div>
       );
@@ -1003,25 +1002,22 @@ const App = () => {
           </div>
         </div>
 
+        {/* KPIs URGENTES REORDENADOS */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <KPICard id="kpi-leads" icon={Users} value={kpis.funnel.leads} label="Total Leads" gradient="from-blue-500 to-blue-600" />
-          <KPICard id="kpi-cotizaciones" icon={Target} value={kpis.cotizacionesActivas} label="Cotizaciones Activas" gradient="from-green-500 to-green-600" />
-          <KPICard id="kpi-visitas" icon={Eye} value={kpis.totalVisitas} label="Total Visitas" gradient="from-teal-500 to-teal-600" />
-          <KPICard id="kpi-conv1" icon={TrendingUp} value={`${kpis.convLeadToCotiz}%`} label="Lead → Cotización" gradient="from-purple-500 to-purple-600" />
+          <KPICard id="ratio-tuc-showroom" icon={MapPin} value={`${kpis.ratioTucShowroom}%`} label="Ratio Tucumán / Visitas" subtext={`${kpis.totalVisitas} visitas sobre ${kpis.leadsTucuman} leads Tuc.`} gradient="from-orange-500 to-orange-600" />
+          <KPICard id="kpi-conv1" icon={TrendingUp} value={`${kpis.convLeadToCotiz}%`} label="Lead → Cotización" subtext={`de ${kpis.funnel.leads} leads, ${kpis.cotizacionesActivas} son cotizaciones `} gradient="from-purple-500 to-purple-600" />
+          <KPICard id="rel-visita-cotiz" icon={Award} value={`${kpis.porcentajeVisitasConCotiz}%`} label="Visitas con Cotización" subtext={`${kpis.visitantesConCotizacion} de ${kpis.totalVisitas} ya cotizaron`} gradient="from-pink-500 to-pink-600" />
         </div>
         
         {kpis.totalInversion > 0 && (
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                 <KPICard id="kpi-cotizaciones" icon={Target} value={kpis.cotizacionesActivas} label="Cotizaciones Activas" gradient="from-green-500 to-green-600" />
+                 <KPICard id="kpi-visitas" icon={Eye} value={kpis.totalVisitas} label="Total Visitas" gradient="from-teal-500 to-teal-600" subtext="" />
+                 <KPICard id="ratio-visitas-lead" icon={Eye} value={`${kpis.ratioVisitasLead}%`} label="Ratio Visitas / Leads" subtext={`${kpis.totalVisitas} visitas sobre ${kpis.funnel.leads} leads`} gradient="from-indigo-500 to-indigo-600" />
                  <KPICard id="kpi-inv" icon={DollarSign} value={`$${kpis.totalInversion.toLocaleString()}`} label="Inversión Total Registrada" gradient="from-slate-700 to-slate-800" />
-                 <KPICard id="kpi-cpl" icon={Target} value={`$${kpis.cplGlobal}`} label="Costo por Lead (CPL)" gradient="from-emerald-600 to-emerald-700" subtext="Inversión / Leads Totales" />
              </div>
         )}
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <KPICard id="ratio-visitas-lead" icon={Eye} value={`${kpis.ratioVisitasLead}%`} label="Ratio Visitas / Leads" subtext={`${kpis.totalVisitas} visitas sobre ${kpis.funnel.leads} leads`} gradient="from-indigo-500 to-indigo-600" />
-          <KPICard id="ratio-tuc-showroom" icon={MapPin} value={`${kpis.ratioTucShowroom}%`} label="Ratio Tucumán / Showroom" subtext={`${kpis.visitasShowroom} visitas sobre ${kpis.leadsTucuman} leads Tuc.`} gradient="from-orange-500 to-orange-600" />
-          <KPICard id="rel-visita-cotiz" icon={Award} value={`${kpis.porcentajeVisitasConCotiz}%`} label="Visitas con Cotización" subtext={`${kpis.visitantesConCotizacion} de ${kpis.totalVisitas} ya cotizaron`} gradient="from-pink-500 to-pink-600" />
-        </div>
 
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -1038,7 +1034,6 @@ const App = () => {
               <BarChart data={agentPerformance}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip totalMap={{'Leads': kpis.funnel.leads, 'Cotizaciones': kpis.funnel.cotizaciones, 'OfertasComerciales': kpis.funnel.ofertas, 'Ventas': kpis.funnel.ventas}} />} /><Legend /><Bar dataKey="Leads" fill="#3b82f6" radius={[8, 8, 0, 0]} /><Bar dataKey="Cotizaciones" fill="#10b981" radius={[8, 8, 0, 0]} /><Bar dataKey="OfertasComerciales" fill="#f59e0b" radius={[8, 8, 0, 0]} /><Bar dataKey="Ventas" fill="#ef4444" radius={[8, 8, 0, 0]} /></BarChart>
             </ChartContainer>
 
-            {/* GRÁFICO UNIFICADO: Desempeño de Vendedores (Por Canal / Por Región) */}
             <ChartContainer 
                 id="agent-performance-unified" 
                 title="Desempeño de Vendedores" 
@@ -1101,7 +1096,7 @@ const App = () => {
                 <Tooltip content={<DailyRegionTooltip />} />
                 <Legend wrapperStyle={{ top: 0 }} />
                 
-                <Bar dataKey="Tucuman" stackId="a" fill="#f59e0b" name="Tucumán" />
+                <Bar dataKey="Tucuman" stackId="a" fill="#ef4444" name="Tucumán" />
                 <Bar dataKey="RestoNOA" stackId="a" fill="#3b82f6" name="Resto NOA" />
                 <Bar dataKey="RestoPais" stackId="a" fill="#10b981" name="Resto País" />
 
@@ -1134,7 +1129,7 @@ const App = () => {
             <ChartContainer id="geo-distribution" title="Distribución por Provincia (Min. 4)" height={300} customContent={
                 <div className="mb-4"><label className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Provincia</label><select value={filters.provincia} onChange={(e) => setFilters({ ...filters, provincia: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">{uniqueProvincias.map(prov => <option key={prov} value={prov}>{prov}</option>)}</select></div>
             }>
-              <BarChart data={geoDistribution}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} interval={0} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" fill="#8884d8">{geoDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Bar></BarChart>
+              <BarChart data={geoDistribution}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} interval={0} /><YAxis /><Tooltip content={<CustomTooltip total={kpis.funnel.leads} />} /><Bar dataKey="value" fill="#8884d8">{geoDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={PROVINCE_COLORS[entry.name] || COLORS[index % COLORS.length]} />)}</Bar></BarChart>
             </ChartContainer>
 
             <ChartContainer id="provincia-analysis" title="Análisis por Provincia" height={350} customContent={
@@ -1143,12 +1138,18 @@ const App = () => {
               <BarChart data={datosPorProvincia}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-40} textAnchor="end" height={80} /><YAxis /><Tooltip content={<CustomTooltip total={totalMetricaProvincia} />} /><Bar dataKey="value" fill={provinciaChartType === 'cotizacion' ? '#10b981' : provinciaChartType === 'oferta' ? '#f59e0b' : '#ef4444'} radius={[8, 8, 0, 0]} /></BarChart>
             </ChartContainer>
 
-            <ChartContainer id="visitas-tipo" title="Tipos de Visitas" height={300}>
-              <BarChart data={visitasData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} /></BarChart>
-            </ChartContainer>
-
-            <ChartContainer id="visitas-agente" title="Visitas Cerradas por Agente" height={300}>
-              <BarChart data={visitasPorAgente}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip content={<CustomTooltip total={kpis.totalVisitas} />} /><Bar dataKey="Visitas" fill="#ec4899" radius={[8, 8, 0, 0]} /></BarChart>
+            {/* GRÁFICO UNIFICADO Y APILADO DE VISITAS */}
+            <ChartContainer id="visitas-unified" title="Detalle de Visitas por Vendedor" height={350}>
+              <BarChart data={visitasApiladasPorAgente}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip content={<StackedTooltip />} />
+                <Legend />
+                <Bar dataKey="Showroom" stackId="a" fill="#8b5cf6" name="Showroom" />
+                <Bar dataKey="Fabrica" stackId="a" fill="#ec4899" name="Fábrica" />
+                <Bar dataKey="Ambas" stackId="a" fill="#14b8a6" name="Ambas (x2)" />
+              </BarChart>
             </ChartContainer>
 
             <ChartContainer id="monthly-trend" title="Tendencia Mensual" height={300}>
